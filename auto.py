@@ -3,6 +3,7 @@ import base64
 import io
 import time
 import re
+import os
 import pyautogui
 import mss
 from PIL import Image
@@ -14,14 +15,13 @@ client = OpenAI(
     api_key="empty",
 )
 
-# User instruction (modify as needed)
-user_instruction = "打开google浏览器，并点击Microsoft Bing logo"
-
 # Prompt for computer GUI agent
 prompt = r"""You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task. 
 
 ## Output Format
 
+Thought: ...
+Action: ...
 
 ## Action Space
 
@@ -37,24 +37,31 @@ finished()
 call_user() # Submit the task and call the user when the task is unsolvable, or when you need the user's help.
 
 ## Note
-- Use Chinese in `Thought` part.
-- Summarize your next action (with its target element) in one sentence in `Thought` part.
+- Use Chinese in the `Thought` part.
+- Summarize your next action (with its target element) in one sentence in the `Thought` part.
 
-## User Instruction
+## User Instruction:
 """
 
-def capture_screen():
+def capture_screen(save_path=None):
     """
-    Capture the current screen and return a base64-encoded PNG image string.
+    Capture the current screen, save the image if a save_path is provided,
+    and return a base64-encoded PNG image string.
     """
     with mss.mss() as sct:
         # Capture the first monitor; adjust index if needed.
         screenshot = sct.grab(sct.monitors[1])
         img = Image.frombytes("RGB", (screenshot.width, screenshot.height), screenshot.rgb)
+        
+        # Save the image if a save_path is provided.
+        if save_path:
+            img.save(save_path, format="PNG")
+        
         buffered = io.BytesIO()
         img.save(buffered, format="PNG")
         encoded_img = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return encoded_img
+
 
 def parse_action_from_response(response_text):
     """
@@ -63,9 +70,9 @@ def parse_action_from_response(response_text):
     
     Action: click(start_box='(218,356)')
     """
-    # Updated regex to match outputs like: Action: click(start_box='(218,356)')
     pattern = r"Action:\s*(\w+)\(start_box='[(](\d+),\s*(\d+)[)]'\)"
     match = re.search(pattern, response_text)
+    print('match:', match)
     if match:
         action_type = match.group(1)
         x = int(match.group(2))
@@ -91,20 +98,29 @@ def execute_action(action_type, x, y):
         pyautogui.doubleClick()
     elif action_type == "right_single":
         pyautogui.rightClick()
-    # Extend with additional actions as needed.
     time.sleep(1)
 
 def main_loop():
     """
     Continuously capture the screen, send it to the model with the instruction and conversation history,
-    parse the returned action, and execute it. The loop terminates if a termination signal is received.
+    parse the returned action, and execute it.
+    
+    When the model returns "call_user()", the user is prompted for a new instruction,
+    a new screenshot is captured, and the loop continues.
     """
+    # Get the initial user instruction.
+    user_instruction = input("请输入初始指令: ")
     conversation_history = ""
     iteration = 0
 
+    # Ensure the screenshots folder exists.
+    os.makedirs("screenshots", exist_ok=True)
+
+
     while True:
         print(f"Iteration {iteration}: Capturing screen...")
-        encoded_string = capture_screen()
+        save_path = os.path.join("screenshots", f"screenshot_{iteration}.png")
+        encoded_string = capture_screen(save_path)
 
         # Create the full prompt including conversation history.
         full_prompt = prompt + user_instruction + "\n" + conversation_history
@@ -133,15 +149,16 @@ def main_loop():
         if "finished()" in response_text:
             print("Received finished() command. Exiting loop.")
             break
+
+        # If the model requests user input, prompt for new instruction.
         if "call_user()" in response_text:
-            print("Received call_user() command. Exiting loop.")
-            break
-            #todoResponse from model:
-            # call_user() # 任务无法完成，需要用户辅助重新输入文字。
-            # Action: call_user()
-            # Received call_user() command. Exiting loop.
-            # Agent loop finished.
-                        
+            print("Received call_user() command. 请重新输入指令：")
+            user_instruction = input("新指令: ")
+            # Append response to conversation history and continue to next iteration.
+            conversation_history += "\n" + response_text
+            iteration += 1
+            time.sleep(2)
+            continue
 
         parsed = parse_action_from_response(response_text)
         if not parsed:
@@ -151,12 +168,13 @@ def main_loop():
             print(f"Executing action: {action_type} at ({x}, {y})")
             execute_action(action_type, x, y)
 
-        # Append the response to the conversation history for context in future iterations.
+        # Append the response to the conversation history for context.
         conversation_history += "\n" + response_text
+        print("conversation_history:", conversation_history)
 
         iteration += 1
-        # Optionally, sleep a bit before the next iteration.
-        time.sleep(2)
+        # Optionally sleep before the next iteration.
+        time.sleep(4)
 
     print("Agent loop finished.")
 
