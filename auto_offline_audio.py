@@ -7,7 +7,9 @@ import json
 import wave
 import argparse
 import requests
+import base64
 import pyaudio
+import traceback
 import pyautogui
 import mss
 from PIL import Image
@@ -42,7 +44,8 @@ def get_user_instruction_from_audio():
     p.terminate()
 
     # --- Save recording to a temporary WAV file ---
-    temp_audio_file = "temp_audio.wav"
+    temp_audio_file = "/media/f/E/project/agentic/UI-TARS/figures/temp_audio.wav"
+    print(temp_audio_file)
     wf = wave.open(temp_audio_file, "wb")
     wf.setnchannels(CHANNELS)
     wf.setsampwidth(p.get_sample_size(FORMAT))
@@ -53,25 +56,28 @@ def get_user_instruction_from_audio():
     # --- Send the audio file to the ASR server ---
     # You can adjust these values as needed.
     asr_host = "127.0.0.1"
-    asr_port = 8001
+    asr_port = 8004
     url = f"http://{asr_host}:{asr_port}/recognition"
-    files = [
-        (
-            "audio",
+    try:
+        files = [
             (
-                os.path.basename(temp_audio_file),
-                open(temp_audio_file, "rb"),
-                "application/octet-stream",
-            ),
-        )
-    ]
-    print("Sending audio file to ASR server at", url)
-    response = requests.post(url, files=files)
-    transcription = response.text.strip()
-    print("Transcription result:", transcription)
-    
+                "audio",
+                (
+                    temp_audio_file,
+                    open(temp_audio_file, "rb"),
+                    "application/octet-stream",
+                ),
+            )
+        ]
+        print("Sending audio file to ASR server at", url)
+        response = requests.post(url, files=files)
+        transcription = response.text.strip()
+        print("Transcription result:", transcription)
+    except Exception as e:
+        print(e)
+        traceback.print_exc()
     # Optionally remove the temporary file.
-    os.remove(temp_audio_file)
+    # os.remove(temp_audio_file)
     return transcription
 
 ##############################
@@ -233,4 +239,5 @@ def main_loop():
 
 if __name__ == "__main__":
     # main_loop()
-    get_user_instruction_from_audio()
+    asr_result = get_user_instruction_from_audio()
+    print("asr_result",asr_result)
